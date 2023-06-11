@@ -1,13 +1,15 @@
 use std::fs;
 use std::env;
 use std::path::Path;
-use std::thread;
 use std::time::Duration;
 use std::process::exit;
 use quick_xml::reader::Reader;
 use quick_xml::events::Event;
 use virt::connect::Connect;
 use virt::domain::Domain;
+use signal_hook::consts::signal::*;
+use signal_hook::iterator::Signals;
+use crossbeam::channel::{select, self, Sender, after};
 
 fn check_args(argv: &Vec<String>) {
 
@@ -35,14 +37,16 @@ check for possible policy denials.");
             exit(exitcode::NOINPUT)
         }
     }
+
 }
 
-fn get_domain_name(file_path: &String) -> String {
+fn get_domain_name(file_path: &String) -> Vec<String> {
 
-    let xml        = fs::read_to_string(file_path).unwrap();
-    let mut reader = Reader::from_str(&xml);
-    let mut buf    = Vec::new();
-    let mut domain = String::new();
+    let xml                       = fs::read_to_string(file_path).unwrap();
+    let mut reader                = Reader::from_str(&xml);
+    let mut buf                   = Vec::new();
+    let mut domain                = String::new();
+    let mut dom_info: Vec<String> = Vec::new();
 
     loop {
         match reader.read_event_into(&mut buf) {
@@ -62,25 +66,26 @@ The 'name' tag in the provided domain xml could not be found.");
         }
         buf.clear();
     }
-    domain
+    dom_info.push(domain);
+    dom_info.push(xml);
+    dom_info
 
 }
 
-fn define_domain(conn: &Connect, domain: &String, file_path: &String) -> Domain {
+fn define_domain(conn: &Connect, dom_info: &Vec<String>) -> Domain {
 
-    let dom = match Domain::lookup_by_name(conn, domain) {
+    let dom = match Domain::lookup_by_name(conn, &dom_info[0]) {
         Ok(d) => d,
         _ => {
-            match Domain::save_image_define_xml(conn, file_path,) {
-                Ok(d) => {
-                    dom = Domain::lookup_by_name(conn, domain);
-                }
+            let dom = match Domain::define_xml(conn, &dom_info[1]) {
+                Ok(d) => d,
                 Err(e) => {
                     eprintln!("FATAL ERROR: CANNOT DEFINE DOMAIN\n\
 {}", e);
                     exit(exitcode::UNAVAILABLE)
                 }
             };
+            dom
         }
     };
     dom
@@ -162,16 +167,63 @@ fn start_domain(dom: &Domain) {
             exit(exitcode::UNAVAILABLE)
         }
     }
+
+}
+
+fn cleanup(mut conn: Connect, mut dom: Domain) {
+    
+    let timeout = after(Duration::from_secs(5));
+    Domain::shutdown(&dom);
+    
+    loop {
+        select! {
+            recv(timeout) -> _ => {
+                Domain::destroy(&dom);
+            },
+            default => {
+                match Domain::get_state(&dom) {
+                    Ok((4,_)) => {
+                        break;
+                    }
+                    Ok((5,_)) => {
+                        break;
+                    },
+                    _ => {}
+                }
+            }
+        }
+    }
+    dom.free();
+    conn.close();
+    
+}
+
+fn await_interrupt(signal_channel: Sender<()>) {
+
+    let mut signals = Signals::new(&[
+        SIGTERM,
+        SIGINT,
+        SIGABRT,
+        SIGQUIT,
+    ]).unwrap();
+
+    for _s in &mut signals {
+        signal_channel.send(());
+    }
+
 }
 
 fn main() {
+
+    let (send_int, recv_int) = channel::unbounded();
+    std::thread::spawn(move || { await_interrupt(send_int)});
 
     let argv: Vec<String> = env::args().collect();
 
     check_args(&argv);
 
     let xml_path = &argv[1];
-    let domain = get_domain_name(xml_path);
+    let dom_info = get_domain_name(xml_path);
 
     let conn = match Connect::open("qemu:///system") {
         Ok(c) => c,
@@ -182,12 +234,19 @@ fn main() {
         }
     };
 
-    let duration = Duration::from_secs(5);
-    
+    let mut dom = define_domain(&conn, &dom_info);
+
     loop {
-        let dom = define_domain(&conn, &domain, xml_path);
-        start_domain(&dom);
-        thread::sleep(duration);
+        select! {
+            recv(recv_int) -> _ => {
+                cleanup(conn, dom);
+                break;
+            },
+            default => {
+                dom = define_domain(&conn, &dom_info);
+                start_domain(&dom);
+            }
+        }
     }
 
 }
