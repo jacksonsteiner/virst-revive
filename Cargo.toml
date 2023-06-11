@@ -8,4 +8,4 @@ edition = "2021"
 [dependencies]
 exitcode = "1.1.2"
 quick-xml = "0.28.2"
-virt = "0.2.12"
+virt = "0.3.0"
