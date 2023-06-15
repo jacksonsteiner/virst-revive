@@ -172,7 +172,7 @@ fn start_domain(dom: &Domain) {
 
 fn cleanup(mut conn: Connect, mut dom: Domain) {
     
-    let timeout = after(Duration::from_secs(5));
+    let timeout = after(Duration::from_secs(10));
     Domain::shutdown(&dom);
     
     loop {
