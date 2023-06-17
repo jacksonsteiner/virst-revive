@@ -2,11 +2,12 @@ use std::fs;
 use std::env;
 use std::path::Path;
 use std::time::Duration;
-use std::process::exit;
+use std::process;
 use quick_xml::reader::Reader;
 use quick_xml::events::Event;
 use virt::connect::Connect;
 use virt::domain::Domain;
+use log::error;
 use signal_hook::consts::signal::*;
 use signal_hook::iterator::Signals;
 use crossbeam::channel::{select, self, Sender, after};
@@ -14,10 +15,12 @@ use crossbeam::channel::{select, self, Sender, after};
 fn check_args(argv: &Vec<String>) {
 
     if argv.len() != 2 {
-        eprintln!("FATAL ERROR: INCORRECT USAGE.\n\
+        let err = "FATAL ERROR: INCORRECT USAGE.\n\
 Use with one argument as absolute path to domain xml: \
-virsh-persist </absolute/path/to/domain/xml.xml>");
-        exit(exitcode::USAGE)
+virsh-persist </absolute/path/to/domain/xml.xml>";
+        eprintln!("{}", err);
+        error!("{}", err);
+        process::exit(1);
     }
 
     let file_path = &argv[1];
@@ -25,16 +28,19 @@ virsh-persist </absolute/path/to/domain/xml.xml>");
     match Path::new(file_path).try_exists() {
         Ok(true) => {}
         Ok(false) => {
-            eprintln!("FATAL ERROR: FILE NOT FOUND\n\
+            let err = "FATAL ERROR: FILE NOT FOUND\n\
 The given file could not be found. \
 If it truly does exist, make sure the user this program is being run as \
 has read permissions to the file. If on a machine with SELINUX enabled, \
-check for possible policy denials.");
-            exit(exitcode::NOINPUT)
+check for possible policy denials.";
+            eprintln!("{}", err);
+            error!("{}", err);
+            process::exit(1);
         }
         Err(e) => {
             eprintln!("{}", e);
-            exit(exitcode::NOINPUT)
+            error!("{}", e);
+            process::exit(1);
         }
     }
 
@@ -58,9 +64,11 @@ fn get_domain_name(file_path: &String) -> Vec<String> {
                 _ => {},
             },
             Ok(Event::Eof) => {
-                eprintln!("FATAL ERROR: INVALID DOMAIN XML\n\
-The 'name' tag in the provided domain xml could not be found.");
-                exit(exitcode::NOINPUT)
+                let err = "FATAL ERROR: INVALID DOMAIN XML\n\
+The 'name' tag in the provided domain xml could not be found.";
+                eprintln!("{}", err);
+                error!("{}", err);
+                process::exit(1);
             },
             _ => {},
         }
@@ -80,9 +88,10 @@ fn define_domain(conn: &Connect, dom_info: &Vec<String>) -> Domain {
             let dom = match Domain::define_xml(conn, &dom_info[1]) {
                 Ok(d) => d,
                 Err(e) => {
-                    eprintln!("FATAL ERROR: CANNOT DEFINE DOMAIN\n\
-{}", e);
-                    exit(exitcode::UNAVAILABLE)
+                    let err = "FATAL ERROR: CANNOT DEFINE DOMAIN";
+                    eprintln!("{}\n{}", err, e);
+                    error!("{}", e);
+                    process::exit(1);
                 }
             };
             dom
@@ -98,9 +107,10 @@ fn start_domain(dom: &Domain) {
         Ok((0,_)) => {
             match Domain::create(dom) {
                 Err(e) => {
-                    eprintln!("FATAL ERROR: CANNOT START DOMAIN\n\
-{}", e);
-                    exit(exitcode::UNAVAILABLE)
+                    let err = "FATAL ERROR: CANNOT START DOMAIN";
+                    eprintln!("{}\n{}", err, e);
+                    error!("{}", e);
+                    process::exit(1);
                 }
                 _ => {}
             }
@@ -109,9 +119,10 @@ fn start_domain(dom: &Domain) {
         Ok((2,_)) => {
             match Domain::resume(dom) {
                 Err(e) => {
-                    eprintln!("FATAL ERROR: COULD NOT RESUME DOAMIN FROM BLOCKED STATE\n\
-{}", e);
-                    exit(exitcode::UNAVAILABLE)
+                    let err = "FATAL ERROR: COULD NOT RESUME DOAMIN FROM BLOCKED STATE";
+                    eprintln!("{}\n{}", err, e);
+                    error!("{}", e);
+                    process::exit(1);
                 }
                 _ => {}
             }
@@ -119,9 +130,10 @@ fn start_domain(dom: &Domain) {
         Ok((3,_)) => {
             match Domain::resume(dom) {
                 Err(e) => {
-                    eprintln!("FATAL ERROR: COULD NOT RESUME DOAMIN FROM PAUSED STATE\n\
-{}", e);
-                    exit(exitcode::UNAVAILABLE)
+                    let err = "FATAL ERROR: COULD NOT RESUME DOAMIN FROM PAUSED STATE";
+                    eprintln!("{}\n{}", err, e);
+                    error!("{}", e);
+                    process::exit(1);
                 }
                 _ => {}
             }
@@ -130,9 +142,10 @@ fn start_domain(dom: &Domain) {
         Ok((5,_)) => {
             match Domain::create(dom) {
                 Err(e) => {
-                    eprintln!("FATAL ERROR: CANNOT START DOMAIN\n\
-{}", e);
-                    exit(exitcode::UNAVAILABLE)
+                    let err = "FATAL ERROR: CANNOT START DOMAIN";
+                    eprintln!("{}\n{}", err, e);
+                    error!("{}", e);
+                    process::exit(1);
                 }
                 _ => {}
             }
@@ -140,9 +153,10 @@ fn start_domain(dom: &Domain) {
         Ok((6,_)) => {
             match Domain::create(dom) {
                 Err(e) => {
-                    eprintln!("FATAL ERROR: CANNOT START DOMAIN FROM CRASH\n\
-{}", e);
-                    exit(exitcode::UNAVAILABLE)
+                    let err = "FATAL ERROR: CANNOT START DOMAIN FROM CRASH";
+                    eprintln!("{}\n{}", err, e);
+                    error!("{}", e);
+                    process::exit(1);
                 }
                 _ => {}
             }
@@ -150,21 +164,25 @@ fn start_domain(dom: &Domain) {
         Ok((7,_)) => {
             match Domain::create(dom) {
                 Err(e) => {
-                    eprintln!("FATAL ERROR: CANNOT START DOMAIN FROM PMSUSPENSION\n\
-{}", e);
-                    exit(exitcode::UNAVAILABLE)
+                    let err = "FATAL ERROR: CANNOT START DOMAIN FROM PMSUSPENSION";
+                    eprintln!("{}\n{}", err, e);
+                    error!("{}", e);
+                    process::exit(1);
                 }
                 _ => {}
             }
         }
         Err(e) => {
-            eprintln!("FATAL ERROR: ERROR RETRIEVING DOMAIN STATE\n\
-{}", e);
-            exit(exitcode::UNAVAILABLE)
+            let err = "FATAL ERROR: ERROR RETRIEVING DOMAIN STATE";
+            eprintln!("{}\n{}", err, e);
+            error!("{}", e);
+            process::exit(1);
         }
         _ => {
-            eprintln!("FATAL ERROR: UNKOWN DOMAIN STATE");
-            exit(exitcode::UNAVAILABLE)
+            let err = "FATAL ERROR: UNKOWN DOMAIN STATE";
+            eprintln!("{}", err);
+            error!("{}", err);
+            process::exit(1);
         }
     }
 
@@ -173,12 +191,16 @@ fn start_domain(dom: &Domain) {
 fn cleanup(mut conn: Connect, mut dom: Domain) {
     
     let timeout = after(Duration::from_secs(10));
-    Domain::shutdown(&dom);
+    match Domain::shutdown(&dom) {
+        _ => {}
+    }
     
     loop {
         select! {
             recv(timeout) -> _ => {
-                Domain::destroy(&dom);
+                match Domain::destroy(&dom) {
+                    _ => {}
+                }
             },
             default => {
                 match Domain::get_state(&dom) {
@@ -193,8 +215,12 @@ fn cleanup(mut conn: Connect, mut dom: Domain) {
             }
         }
     }
-    dom.free();
-    conn.close();
+    match dom.free() {
+        _ => {}
+    }
+    match conn.close() {
+        _ => {}
+    }
     
 }
 
@@ -208,7 +234,9 @@ fn await_interrupt(signal_channel: Sender<()>) {
     ]).unwrap();
 
     for _s in &mut signals {
-        signal_channel.send(());
+        match signal_channel.send(()) {
+            _ => {}
+        }
     }
 
 }
@@ -228,9 +256,10 @@ fn main() {
     let conn = match Connect::open("qemu:///system") {
         Ok(c) => c,
         Err(e) => {
-            eprintln!("FATAL ERROR: COULD NOT CONNECT TO QEMU HYPERVISOR\n\
-{}", e);
-            exit(exitcode::UNAVAILABLE)
+            let err = "FATAL ERROR: COULD NOT CONNECT TO QEMU HYPERVISOR";
+            eprintln!("{}\n{}", err, e);
+            error!("{}", e);
+            process::exit(1);
         }
     };
 
